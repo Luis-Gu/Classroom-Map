@@ -75,7 +75,7 @@ class Theme:
     
     # Tipografia Moderna
     # Tipografia principal (Inter como primária, Roboto como fallback)
-    FONT_FAMILY = "Inter"          # Fonte principal
+    FONT_FAMILY = "Segoe UI"       # Fonte principal (nativa Windows)
     FONT_FAMILY_ALT = "Roboto"     # Fonte secundária/fallback
     FONT_FAMILY_MONO = "Roboto Mono"  # Fonte monoespaçada/fallback
     

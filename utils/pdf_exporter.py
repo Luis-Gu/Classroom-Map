@@ -218,8 +218,9 @@ class PDFExporter:
                 center_x = lx + lh / 2
                 center_y = ly + lw / 2
                 with pdf.rotation(90, center_x, center_y):
-                    pdf.set_xy(center_x - lw / 2, center_y - lh / 2)
-                    pdf.cell(lw, lh, text, align='C')
+                    tw = pdf.get_string_width(text)
+                    pdf.set_xy(center_x - tw / 2, center_y - lh / 2)
+                    pdf.cell(tw, lh, text, align='C')
             else:
                 pdf.set_xy(lx, ly)
                 pdf.cell(lw, lh, text, align='C')

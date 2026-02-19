@@ -11,17 +11,30 @@ class AppWindow(ctk.CTk):
         super().__init__()
 
         # === CONFIGURAÇÃO DA JANELA ===
-        self.title("Gerador de Mapa de Sala - Classroom Map")
+        self.title("Gerador de Mapa de Sala")
         self.geometry("1300x750")
         self.resizable(False, False)
+        
+        # Ícone do app (taskbar + titlebar)
+        import os, sys
+        if sys.platform == "win32":
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("classroommap.app")
+        
+        try:
+            import os
+            if sys.platform == "win32":
+                ico_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "icon", "app.ico")
+                if os.path.exists(ico_path):
+                    self.after(10, lambda: self.iconbitmap(ico_path))
+        except Exception as e:
+            print(f"Icon error: {e}")
         
         # Tema
         ctk.set_appearance_mode("Light")
         self.configure(fg_color=Theme.BACKGROUND_LIGHT)
 
         # === LAYOUT (2 Colunas) ===
-        # Col 0: Sidebar - Compacta
-        # Col 1: Visualizer (Preview) - Maior
         self.grid_columnconfigure(0, weight=0, minsize=240)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -31,7 +44,7 @@ class AppWindow(ctk.CTk):
     def _setup_ui(self):
         """Configura a interface principal"""
         
-        # === SIDEBAR ESQUERDA (TUDO) ===
+        # === SIDEBAR ESQUERDA ===
         from .sidebar_unified import SidebarUnified
         self.sidebar = SidebarUnified(
             self,
@@ -40,6 +53,7 @@ class AppWindow(ctk.CTk):
             on_generate=self.handle_generate,
             on_save=self.handle_save,
             on_load=self.handle_load,
+            on_delete=self.handle_delete,
             on_export=self.handle_export
         )
         self.sidebar.grid(row=0, column=0, sticky="nsew")
@@ -56,6 +70,17 @@ class AppWindow(ctk.CTk):
         
         # Loading Overlay
         self.loading = LoadingOverlay(self.center_frame)
+        
+        # Refresh dropdown on startup
+        self.after(500, self._refresh_saves)
+    
+    # === HELPERS ===
+    
+    def _refresh_saves(self):
+        """Atualiza a lista de saves no dropdown"""
+        from utils.file_handler import FileHandler
+        saves = FileHandler.list_saves()
+        self.sidebar.refresh_saves_dropdown(saves)
     
     # === HANDLERS ===
     
@@ -113,58 +138,88 @@ class AppWindow(ctk.CTk):
         ToastNotification.show(self.center_frame, "Erro ao gerar mapa", type="error")
     
     def handle_save(self):
-        from tkinter import filedialog
+        """Salva o layout internamente usando o nome da sala"""
         from utils.file_handler import FileHandler
         
-        filename = filedialog.asksaveasfilename(
-            defaultextension=".json",
-            filetypes=[("Arquivo JSON", "*.json"), ("Todos os arquivos", "*.*")],
-            title="Salvar Configuração"
-        )
+        config = self.sidebar.get_config()
+        room_name = config.get("room_name", "").strip()
         
-        if filename:
-            try:
-                full_data = {
-                    "config": self.sidebar.get_config(),
-                    "students": self.sidebar.get_students(),
-                    "seating_map": {str(k): v for k, v in self.visualizer.seating_map.items()}
-                }
-                
-                if FileHandler.save_layout(full_data, filename):
-                    ToastNotification.show(self.center_frame, "Configuração salva!", type="success")
-            except Exception as e:
-                ToastNotification.show(self.center_frame, "Erro ao salvar arquivo", type="error")
+        if not room_name:
+            ToastNotification.show(self.center_frame, "Preencha o nome da sala primeiro", type="warning")
+            return
+        
+        try:
+            full_data = {
+                "config": config,
+                "students": self.sidebar.get_students(),
+                "seating_map": {str(k): v for k, v in self.visualizer.seating_map.items()}
+            }
+            
+            if FileHandler.save_internal(room_name, full_data):
+                self._refresh_saves()
+                # Select the just-saved item
+                self.sidebar.saves_dropdown.set(room_name)
+                ToastNotification.show(self.center_frame, f"'{room_name}' salvo!", type="success")
+            else:
+                ToastNotification.show(self.center_frame, "Erro ao salvar", type="error")
+        except Exception as e:
+            print(f"Erro ao salvar: {e}")
+            ToastNotification.show(self.center_frame, "Erro ao salvar", type="error")
     
     def handle_load(self):
-        from tkinter import filedialog
+        """Carrega o layout selecionado no dropdown"""
         from utils.file_handler import FileHandler
         
-        filename = filedialog.askopenfilename(
-            filetypes=[("Arquivo JSON", "*.json"), ("Todos os arquivos", "*.*")],
-            title="Carregar Configuração"
-        )
+        selected = self.sidebar.get_selected_save()
+        if not selected:
+            ToastNotification.show(self.center_frame, "Selecione um layout salvo", type="warning")
+            return
         
-        if filename:
-            try:
-                data = FileHandler.load_layout(filename)
-                if data:
-                    if "config" in data:
-                        self.visualizer.update_config(data["config"])
-                    
-                    if "seating_map" in data:
-                        seating = {}
-                        for k, v in data["seating_map"].items():
-                            try:
-                                parts = k.strip("()").split(',')
-                                col, row = int(parts[0]), int(parts[1])
-                                seating[(col, row)] = v
-                            except:
-                                pass
-                        self.visualizer.set_seating(seating)
-                    
-                    ToastNotification.show(self.center_frame, "Configuração carregada!", type="success")
-            except Exception as e:
-                ToastNotification.show(self.center_frame, "Erro ao carregar arquivo", type="error")
+        try:
+            data = FileHandler.load_internal(selected)
+            if data:
+                # Restore config
+                if "config" in data:
+                    self.sidebar.set_config(data["config"])
+                    self.visualizer.update_config(data["config"])
+                
+                # Restore students
+                if "students" in data:
+                    self.sidebar.set_students(data["students"])
+                
+                # Restore seating map
+                if "seating_map" in data:
+                    seating = {}
+                    for k, v in data["seating_map"].items():
+                        try:
+                            parts = k.strip("()").split(',')
+                            col, row = int(parts[0].strip()), int(parts[1].strip())
+                            seating[(col, row)] = v
+                        except:
+                            pass
+                    self.visualizer.set_seating(seating)
+                
+                ToastNotification.show(self.center_frame, f"'{selected}' carregado!", type="success")
+            else:
+                ToastNotification.show(self.center_frame, "Erro ao carregar layout", type="error")
+        except Exception as e:
+            print(f"Erro ao carregar: {e}")
+            ToastNotification.show(self.center_frame, "Erro ao carregar", type="error")
+    
+    def handle_delete(self):
+        """Exclui o layout selecionado no dropdown"""
+        from utils.file_handler import FileHandler
+        
+        selected = self.sidebar.get_selected_save()
+        if not selected:
+            ToastNotification.show(self.center_frame, "Selecione um layout para excluir", type="warning")
+            return
+        
+        if FileHandler.delete_save(selected):
+            self._refresh_saves()
+            ToastNotification.show(self.center_frame, f"'{selected}' excluído!", type="success")
+        else:
+            ToastNotification.show(self.center_frame, "Erro ao excluir", type="error")
     
     def handle_export(self):
         from tkinter import filedialog
@@ -215,3 +270,4 @@ class AppWindow(ctk.CTk):
 
     def run(self):
         self.mainloop()
+
