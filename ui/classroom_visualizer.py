@@ -152,7 +152,7 @@ class ClassroomVisualizer(ctk.CTkFrame):
         self.draw()
     
     def draw(self):
-        """Desenho principal da sala com estilo premium"""
+        """Desenho principal da sala - matches PDF layout with dynamic sizing"""
         self.resize_triggered = False
         self.canvas.delete("all")
         
@@ -170,65 +170,103 @@ class ClassroomVisualizer(ctk.CTkFrame):
             self.draw_empty_state()
             return
         
-        rows_config = self.current_config.get("rows", [7, 7, 7, 7])
+        config = self.current_config
+        rows_config = config.get("rows", [7, 7, 7, 7])
         max_rows = max(rows_config)
+        num_cols = 4
         
-        # === MARGENS E LAYOUT ===
-        margin_top = 100  # Maior para dar espaço para mobília superior
-        margin_bottom = 60
-        margin_left = 60
-        margin_right = 60
+        # === DYNAMIC MARGINS based on furniture placement ===
+        furniture_margin = 70  # pixels reserved for furniture labels
+        page_margin = 12       # tiny edge margin
         
-        avail_w = w - margin_left - margin_right
-        avail_h = h - margin_top - margin_bottom
+        board_side = config.get("board")
+        door_side = config.get("door")
+        windows_side = config.get("windows")
         
-        # Dimensões base das carteiras (maiores para nomes caberem)
-        item_w = 75
-        item_h = 55
-        gap_x = 15
-        gap_y = 12
+        has_top = board_side == "Topo" or door_side == "Topo" or windows_side == "Topo"
+        has_bottom = board_side == "Fundo" or door_side == "Fundo" or windows_side == "Fundo"
+        has_left = board_side == "Esq" or door_side == "Esq" or windows_side == "Esq"
+        has_right = board_side == "Dir" or door_side == "Dir" or windows_side == "Dir"
         
-        # === ESCALA RESPONSIVA ===
-        req_w = (4 * item_w) + (3 * gap_x)
-        req_h = (max_rows * item_h) + ((max_rows - 1) * gap_y)
+        # Room name header space
+        room_name = config.get("room_name", "")
+        header_space = 25 if room_name else 10
         
-        scale = 1.0
-        if req_w > avail_w or req_h > avail_h:
-            scale_w = avail_w / req_w
-            scale_h = avail_h / req_h
-            scale = min(scale_w, scale_h, 1.0)
+        mt = page_margin + (furniture_margin if has_top else 0) + header_space
+        mb = page_margin + (furniture_margin if has_bottom else 0)
+        ml = page_margin + (furniture_margin if has_left else 0)
+        mr = page_margin + (furniture_margin if has_right else 0)
         
-        scaled_w = item_w * scale
-        scaled_h = item_h * scale
-        scaled_gap_x = gap_x * scale
-        scaled_gap_y = gap_y * scale
+        avail_w = w - ml - mr
+        avail_h = h - mt - mb
         
-        # === CENTRALIZAÇÃO ===
-        total_w = (4 * scaled_w) + (3 * scaled_gap_x)
-        total_h = (max_rows * scaled_h) + ((max_rows - 1) * scaled_gap_y)
+        if avail_w < 50 or avail_h < 50:
+            return
         
-        offset_x = margin_left + (avail_w - total_w) / 2
-        offset_y = margin_top + (avail_h - total_h) / 2
+        # === DYNAMIC SIZING (same proportions as PDF) ===
+        corridor_ratio = 0.30
+        row_gap_ratio = 0.25
+        chair_h_ratio = 0.28
+        chair_gap_ratio = 0.08
         
-        # === CABEÇALHOS DAS COLUNAS ===
-        self._draw_column_headers(offset_x, offset_y, scaled_w, scaled_gap_x, rows_config, scale)
+        desk_w = avail_w / (num_cols + (num_cols - 1) * corridor_ratio)
         
-        # === CARTEIRAS ===
-        self._draw_desks(offset_x, offset_y, scaled_w, scaled_h, scaled_gap_x, scaled_gap_y, rows_config, scale)
+        total_item_h = avail_h / (max_rows + (max_rows - 1) * row_gap_ratio)
+        desk_h = total_item_h / (1 + chair_gap_ratio + chair_h_ratio)
+        chair_h = desk_h * chair_h_ratio
+        chair_gap = desk_h * chair_gap_ratio
         
-        # === MOBÍLIA ===
-        self._draw_furniture(w, h, margin_top, margin_bottom, margin_left, margin_right, scale)
+        gap_x = desk_w * corridor_ratio
+        gap_y = total_item_h * row_gap_ratio
+        
+        # Cap max size so desks don't get absurdly large
+        max_desk_w = 110
+        max_desk_h = 40
+        if desk_w > max_desk_w:
+            desk_w = max_desk_w
+            gap_x = desk_w * corridor_ratio
+        if desk_h > max_desk_h:
+            desk_h = max_desk_h
+            chair_h = desk_h * chair_h_ratio
+            chair_gap = desk_h * chair_gap_ratio
+            total_item_h = desk_h + chair_gap + chair_h
+            gap_y = total_item_h * row_gap_ratio
+        
+        # Recalculate block for centering
+        block_w = (num_cols * desk_w) + ((num_cols - 1) * gap_x)
+        block_h = (max_rows * total_item_h) + ((max_rows - 1) * gap_y)
+        
+        ox = ml + (avail_w - block_w) / 2
+        oy = mt + (avail_h - block_h) / 2
+        
+        # === ROOM NAME (Top Right) ===
+        if room_name:
+            font_size = max(int(desk_w * 0.15), 11)
+            self.canvas.create_text(
+                w - page_margin - 5, page_margin + 8,
+                text=room_name.upper(),
+                fill=Theme.TEXT_PRIMARY,
+                font=(Theme.FONT_FAMILY, font_size, "bold"),
+                anchor="ne"
+            )
+        
+        # === COLUMN HEADERS ===
+        self._draw_column_headers(ox, oy, desk_w, gap_x, rows_config)
+        
+        # === DESKS ===
+        self._draw_desks(ox, oy, desk_w, desk_h, gap_x, gap_y,
+                         chair_h, chair_gap, total_item_h, rows_config)
+        
+        # === FURNITURE ===
+        self._draw_furniture(w, h, page_margin, furniture_margin,
+                             has_top, has_bottom, has_left, has_right)
         
         # Atualiza info no header
         total_students = len(self.seating_map)
         self.info_label.configure(text=f"{total_students} alunos")
     
-    def _draw_column_headers(self, offset_x, offset_y, scaled_w, scaled_gap_x, rows_config, scale):
-        """Desenha cabeçalhos das colunas com nome da turma (similar ao PDF)"""
-        header_y = offset_y - 28 * scale  # Mais afastado da mobília superior
-        
-        # Pegar nomes das turmas do seating_map
-        class_names = [None, None, None, None]  # 4 colunas
+    def _draw_column_headers(self, ox, oy, desk_w, gap_x, rows_config):
+        """Desenha cabeçalhos das colunas com nome da turma"""
         class_colors = [
             Theme.CLASS_A_COLOR,
             Theme.CLASS_B_COLOR,
@@ -237,6 +275,7 @@ class ClassroomVisualizer(ctk.CTkFrame):
         ]
         
         # Deduzir nomes das turmas
+        class_names = [None, None, None, None]
         for col_idx in range(4):
             for row_idx in range(rows_config[col_idx] if col_idx < len(rows_config) else 7):
                 student = self.seating_map.get((col_idx, row_idx))
@@ -244,19 +283,18 @@ class ClassroomVisualizer(ctk.CTkFrame):
                     class_names[col_idx] = student.get('class', '').upper()
                     break
         
-        # Desenhar nome de cada coluna
+        font_size = max(int(desk_w * 0.11), 8)
+        header_y = oy - font_size - 3
+        
         for col_idx in range(4):
-            x = offset_x + (col_idx * (scaled_w + scaled_gap_x)) + (scaled_w / 2)
+            x = ox + (col_idx * (desk_w + gap_x)) + (desk_w / 2)
             name = class_names[col_idx] or ""
             color = class_colors[col_idx]
             
             if name:
-                # Truncar nome se muito longo
-                max_chars = 12
-                if len(name) > max_chars:
-                    name = name[:max_chars-1] + "..."
+                if len(name) > 14:
+                    name = name[:13] + "."
                 
-                font_size = max(int(10 * scale), 9)
                 self.canvas.create_text(
                     x, header_y,
                     text=name,
@@ -264,27 +302,25 @@ class ClassroomVisualizer(ctk.CTkFrame):
                     font=(Theme.FONT_FAMILY, font_size, "bold")
                 )
     
-    def _draw_desks(self, offset_x, offset_y, scaled_w, scaled_h, scaled_gap_x, scaled_gap_y, rows_config, scale):
+    def _draw_desks(self, ox, oy, desk_w, desk_h, gap_x, gap_y,
+                    chair_h, chair_gap, total_item_h, rows_config):
         """Desenha as carteiras com estilo moderno e sombras simuladas"""
+        shadow_offset = max(2, desk_w * 0.03)
+        name_font_size = max(int(desk_w * 0.08), 5)
+        
         for col_idx in range(4):
             num_seats = rows_config[col_idx]
-            curr_x = offset_x + (col_idx * (scaled_w + scaled_gap_x))
             
             for row_idx in range(num_seats):
-                curr_y = offset_y + (row_idx * (scaled_h + scaled_gap_y))
+                curr_x = ox + (col_idx * (desk_w + gap_x))
+                curr_y = oy + (row_idx * (total_item_h + gap_y))
                 
-                # Proporções da carteira
-                table_h = 38 * scale
-                chair_h = 16 * scale
-                gap_part = 4 * scale
-                
-                # === SOMBRA (simulada com retângulo deslocado) ===
-                shadow_offset = 3 * scale
+                # === SOMBRA da mesa ===
                 self.canvas.create_rectangle(
                     curr_x + shadow_offset,
                     curr_y + shadow_offset,
-                    curr_x + scaled_w + shadow_offset,
-                    curr_y + table_h + shadow_offset,
+                    curr_x + desk_w + shadow_offset,
+                    curr_y + desk_h + shadow_offset,
                     fill=Theme.SHADOW_COLOR,
                     outline=""
                 )
@@ -292,33 +328,33 @@ class ClassroomVisualizer(ctk.CTkFrame):
                 # === MESA ===
                 self.canvas.create_rectangle(
                     curr_x, curr_y,
-                    curr_x + scaled_w, curr_y + table_h,
+                    curr_x + desk_w, curr_y + desk_h,
                     fill=Theme.DESK_FILL,
                     outline=Theme.DESK_BORDER,
-                    width=max(int(1 * scale), 1)
+                    width=1
                 )
                 
                 # === CADEIRA ===
-                chair_w = 42 * scale
-                chair_x = curr_x + (scaled_w - chair_w) / 2
-                chair_y = curr_y + table_h + gap_part
+                ch_w = desk_w * 0.55
+                ch_x = curr_x + (desk_w - ch_w) / 2
+                ch_y = curr_y + desk_h + chair_gap
                 
                 # Sombra da cadeira
                 self.canvas.create_rectangle(
-                    chair_x + shadow_offset / 2,
-                    chair_y + shadow_offset / 2,
-                    chair_x + chair_w + shadow_offset / 2,
-                    chair_y + chair_h + shadow_offset / 2,
+                    ch_x + shadow_offset / 2,
+                    ch_y + shadow_offset / 2,
+                    ch_x + ch_w + shadow_offset / 2,
+                    ch_y + chair_h + shadow_offset / 2,
                     fill=Theme.SHADOW_COLOR,
                     outline=""
                 )
                 
                 self.canvas.create_rectangle(
-                    chair_x, chair_y,
-                    chair_x + chair_w, chair_y + chair_h,
+                    ch_x, ch_y,
+                    ch_x + ch_w, ch_y + chair_h,
                     fill=Theme.CHAIR_FILL,
                     outline=Theme.DESK_BORDER,
-                    width=max(int(1 * scale), 1)
+                    width=1
                 )
                 
                 # === NOME DO ALUNO ===
@@ -326,41 +362,52 @@ class ClassroomVisualizer(ctk.CTkFrame):
                 if student:
                     name = student.get('name', '').upper()
                     
-                    # Truncar nome para caber na desk - limite bem restrito
-                    max_chars = 18  # Limite fixo pequeno
+                    # Show first + second name (same logic as PDF)
+                    parts = name.split()
+                    if len(parts) >= 2:
+                        name = f"{parts[0]} {parts[1]}"
+                        if len(name) > 16:
+                            name = f"{parts[0]} {parts[1][0]}."
+                    else:
+                        name = parts[0] if parts else ""
                     
-                    font_size = max(int(5 * scale), 5)  # Fonte pequena para caber na desk
+                    if len(name) > 18:
+                        name = name[:17] + "."
                     
-                    # Texto com nome
+                    # Center text in desk
                     self.canvas.create_text(
-                        curr_x + scaled_w / 2,
-                        curr_y + table_h / 2,
+                        curr_x + desk_w / 2,
+                        curr_y + desk_h / 2,
                         text=name,
                         fill=Theme.TEXT_PRIMARY,
-                        font=(Theme.FONT_FAMILY, font_size, "bold")
+                        font=(Theme.FONT_FAMILY, name_font_size, "bold")
                     )
     
-    def _draw_furniture(self, w, h, mt, mb, ml, mr, scale):
+    def _draw_furniture(self, w, h, page_margin, furniture_margin,
+                        has_top, has_bottom, has_left, has_right):
         """Desenha elementos de mobília com estilo moderno"""
         config = self.current_config
         
         def draw_furniture_label(text, side):
             """Desenha label de mobília com estilo card"""
-            rect_w = 120 * scale  # Menor
-            rect_h = 28 * scale   # Menor
-            corner = 6 * scale
+            rect_w = 120
+            rect_h = 28
+            corner = 6
             
-            # Posicionamento - móveis bem afastados para não sobrepor nome da turma
             if side == "Topo":
-                cx, cy = w / 2, 25  # Fixo bem no topo
+                cx = w / 2
+                cy = page_margin + furniture_margin / 2
             elif side == "Fundo":
-                cx, cy = w / 2, h - (mb / 2) + 5  # Um pouco mais para baixo
+                cx = w / 2
+                cy = h - page_margin - furniture_margin / 2
             elif side == "Esq":
-                cx, cy = ml / 2, h / 2
-                rect_w, rect_h = rect_h, rect_w  # Swap para vertical
+                cx = page_margin + furniture_margin / 2
+                cy = h / 2
+                rect_w, rect_h = rect_h, rect_w  # Swap for vertical
             elif side == "Dir":
-                cx, cy = w - (mr / 2), h / 2
-                rect_w, rect_h = rect_h, rect_w  # Swap para vertical
+                cx = w - page_margin - furniture_margin / 2
+                cy = h / 2
+                rect_w, rect_h = rect_h, rect_w  # Swap for vertical
             else:
                 return
             
@@ -370,7 +417,7 @@ class ClassroomVisualizer(ctk.CTkFrame):
             y2 = cy + rect_h / 2
             
             # Sombra
-            shadow = 4 * scale
+            shadow = 3
             self.canvas.create_rounded_rect(
                 x1 + shadow, y1 + shadow, x2 + shadow, y2 + shadow,
                 corner, fill=Theme.SHADOW_COLOR, outline=""
@@ -380,28 +427,27 @@ class ClassroomVisualizer(ctk.CTkFrame):
             self.canvas.create_rounded_rect(
                 x1, y1, x2, y2,
                 corner, fill=Theme.FURNITURE_FILL, outline=Theme.FURNITURE_BORDER,
-                width=max(int(2 * scale), 1)
+                width=2
             )
             
-            # Texto (com rotação se vertical) - TODOS usam PIL para ficarem iguais
-            font_size = max(int(11 * scale), 9)
+            # Texto (com rotação se vertical) - TODOS usam PIL
+            font_size = 10
             
             # Converter cor do tema para RGB
             color_hex = Theme.FURNITURE_TEXT
             if color_hex.startswith('#'):
-                r = int(color_hex[1:3], 16)
-                g = int(color_hex[3:5], 16)
-                b = int(color_hex[5:7], 16)
-                color = (r, g, b)
+                r_c = int(color_hex[1:3], 16)
+                g_c = int(color_hex[3:5], 16)
+                b_c = int(color_hex[5:7], 16)
+                color = (r_c, g_c, b_c)
             else:
-                color = (75, 85, 99)  # Fallback
+                color = (75, 85, 99)
             
-            # Usar fonte do sistema (bold)
             try:
-                font = ImageFont.truetype("segoeuib.ttf", font_size)  # Segoe UI Bold
+                font = ImageFont.truetype("segoeuib.ttf", font_size)
             except:
                 try:
-                    font = ImageFont.truetype("arialbd.ttf", font_size)  # Arial Bold
+                    font = ImageFont.truetype("arialbd.ttf", font_size)
                 except:
                     try:
                         font = ImageFont.truetype("arial.ttf", font_size)
@@ -409,32 +455,26 @@ class ClassroomVisualizer(ctk.CTkFrame):
                         font = ImageFont.load_default()
             
             try:
-                # Criar imagem temporária para medir
                 temp_img = Image.new('RGBA', (1, 1), (255, 255, 255, 0))
                 temp_draw = ImageDraw.Draw(temp_img)
                 bbox = temp_draw.textbbox((0, 0), text, font=font)
                 text_width = bbox[2] - bbox[0]
                 text_height = bbox[3] - bbox[1]
                 
-                # Criar imagem com texto
                 img = Image.new('RGBA', (text_width + 10, text_height + 10), (255, 255, 255, 0))
                 draw = ImageDraw.Draw(img)
                 draw.text((5, 5), text, font=font, fill=color)
                 
                 is_vertical = side in ["Esq", "Dir"]
                 if is_vertical:
-                    # Rotacionar 90 graus para vertical
                     img = img.rotate(-90, expand=True)
                 
-                # Converter e desenhar
                 photo = ImageTk.PhotoImage(img)
                 self.canvas.create_image(cx, cy, image=photo)
-                # Manter referência para evitar garbage collection
                 if not hasattr(self, '_text_images'):
                     self._text_images = []
                 self._text_images.append(photo)
             except Exception as e:
-                # Fallback: texto horizontal se houver erro
                 print(f"Erro ao criar texto: {e}")
                 self.canvas.create_text(
                     cx, cy,
@@ -452,41 +492,6 @@ class ClassroomVisualizer(ctk.CTkFrame):
         
         if config.get("windows") not in ["Nenhum", None, ""]:
             draw_furniture_label("JANELAS", config["windows"])
-    
-    def _create_vertical_text_image(self, text, font_size, color):
-        """Cria uma imagem com texto rotacionado 90 graus para elementos verticais"""
-        try:
-            # Usar fonte do sistema
-            try:
-                font = ImageFont.truetype("segoeui.ttf", font_size)
-            except:
-                try:
-                    font = ImageFont.truetype("arial.ttf", font_size)
-                except:
-                    font = ImageFont.load_default()
-            
-            # Criar imagem temporária para medir o texto
-            temp_img = Image.new('RGBA', (1, 1), (255, 255, 255, 0))
-            temp_draw = ImageDraw.Draw(temp_img)
-            bbox = temp_draw.textbbox((0, 0), text, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-            
-            # Criar imagem com o texto horizontal
-            img = Image.new('RGBA', (text_width + 10, text_height + 10), (255, 255, 255, 0))
-            draw = ImageDraw.Draw(img)
-            
-            # Desenhar texto
-            draw.text((5, 5), text, font=font, fill=color)
-            
-            # Rotacionar 90 graus no sentido horário
-            img_rotated = img.rotate(-90, expand=True)
-            
-            # Converter para PhotoImage
-            return ImageTk.PhotoImage(img_rotated)
-        except Exception as e:
-            print(f"Erro ao criar texto vertical: {e}")
-            return None
 
 
 # Helper para desenhar retângulos com cantos arredondados no canvas
@@ -548,4 +553,3 @@ def create_rounded_rect(self, x1, y1, x2, y2, radius=20, **kwargs):
 
 # Adiciona o método à classe Canvas
 ctk.CTkCanvas.create_rounded_rect = create_rounded_rect
-
